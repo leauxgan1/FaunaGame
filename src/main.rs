@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_rapier3d::control::KinematicCharacterController;
 use bevy_rapier3d::prelude::*;
 use bevy::math::Vec3;
 use bevy::prelude::Time;
@@ -7,7 +8,6 @@ use bevy::prelude::Time;
 #[derive(Bundle)]
 struct PlayerBundle {
     player: Player,
-    transform: Transform,
     health: Health,
     stats: PlayerStats,
 }
@@ -16,7 +16,6 @@ impl Default for PlayerBundle {
     fn default() -> Self {
         Self {
             player: Player,
-            transform: Transform::from_xyz(0.0,0.0,0.0),
             health: Health {
                 health: 100,
                 max_health: 100,
@@ -47,58 +46,6 @@ struct Health {
     max_health: u32,
 }
 
-fn setup (
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let _player_id = commands
-        .spawn(RigidBody::Dynamic)
-        .insert(Collider::cuboid(0.5, 0.5, 0.5))
-        .insert(Restitution::coefficient(0.5))
-        .insert(PlayerBundle {
-            transform: Transform::from_xyz(0.0,0.0,0.0).looking_at(Vec3::new(0.0,4.0,0.0),Vec3::new(0.0,1.0,0.0)),
-            ..default()
-        }
-    );
-    // Base of map
-    commands
-        .spawn(Collider::cuboid(100.0, 0.1, 100.0))
-        .insert(TransformBundle::from(Transform::from_xyz(0.0, -2.0, 0.0)))
-        .insert(PbrBundle { 
-            mesh: meshes.add(Cuboid::new(100.0,0.1,100.0)),
-            material: materials.add(Color::WHITE),
-            ..default()
-        });
-    // cube
-    commands
-        .spawn(RigidBody::Dynamic)
-        .insert(Collider::cuboid(0.5, 0.5, 0.5))
-        .insert(Restitution::coefficient(0.5))
-        .insert(PbrBundle { 
-            transform: Transform::from_xyz(0.0,4.0,-5.0),
-            mesh: meshes.add(Cuboid::new(0.5,0.5,0.5)),
-            material: materials.add(Color::WHITE),
-            ..default()
-        });
-    // Light
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            shadows_enabled: true,
-            ..default()
-        },
-        transform: Transform::from_xyz(4.0,8.0,4.0),
-        ..default()
-    });
-
-    // Camera
-    commands
-        .spawn(Camera3dBundle {
-            transform: Transform::default(),
-            ..default()
-        });
-
-}
 
 fn handle_input(
     mut app_exit_events: ResMut<Events<bevy::app::AppExit>>,
@@ -123,51 +70,106 @@ fn update_camera (
     }
 
 }
-
 fn player_movement (
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut player_query: Query<(&mut Transform,&PlayerStats), With<Player>>,
+    mut kinematic_bodies: Query<(&mut Velocity, &Transform), With<Player>>,
 ) {
+    if let Ok((mut velocity, transform)) = kinematic_bodies.get_single_mut() {
+        let mut direction = Vec3::ZERO;
+        if keys.pressed(KeyCode::KeyW) {
+            direction += *transform.forward();
+        }
+        if keys.pressed(KeyCode::KeyA) {
+            direction -= *transform.right();
+        }
+        if keys.pressed(KeyCode::KeyS) {
+            direction -= *transform.forward();
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            direction += *transform.right();
+        }
 
-    let mut player_info = player_query.get_single_mut().unwrap();
-    // let mut movement_vec = Vec3::new(0.0,0.0,0.0);
-    let mut rotation_quat = Quat::IDENTITY;
+        
+        let mut rotation_vec = Vec3::ZERO;
+        if keys.pressed(KeyCode::ArrowLeft) {
+            rotation_vec += Vec3::new(0.0,1.0,0.0)
+        }
+        if keys.pressed(KeyCode::ArrowRight) {
+            rotation_vec += Vec3::new(0.0,-1.0,0.0)
+        }
+        if keys.pressed(KeyCode::ArrowUp) {
 
-    // Move the player based on keyboard input
-    // if keys.pressed(KeyCode::KeyW) {
-    //     movement_vec.z -= 1.0;
-    // }
-    // if keys.pressed(KeyCode::KeyA) {
-    //     movement_vec.x -= 1.0;
-    // }
-    // if keys.pressed(KeyCode::KeyS) {
-    //     movement_vec.z += 1.0;
-    // }
-    // if keys.pressed(KeyCode::KeyD) {
-    //     movement_vec.x += 1.0;
-    // }
-    // Rotate the player based on keyboard input
-    if keys.pressed(KeyCode::ArrowLeft) {
-        rotation_quat = Quat::from_rotation_y(1.0);
-    }
-    if keys.pressed(KeyCode::ArrowRight) {
-        rotation_quat = Quat::from_rotation_y(-1.0);
-    }
-    if keys.pressed(KeyCode::ArrowUp) {
-        rotation_quat = Quat::from_rotation_x(1.0);
-    }
-    if keys.pressed(KeyCode::ArrowDown) {
-        rotation_quat = Quat::from_rotation_x(-1.0);
-    }
+            rotation_vec += Vec3::new(1.0,0.0,0.0)
+        }
+        if keys.pressed(KeyCode::ArrowDown) {
+            rotation_vec += Vec3::new(-1.0,0.0,0.0)
+        }
+        // Rotate character based on arrow keys
+        let movement_vel = direction.normalize_or_zero() * 500.0 * time.delta_seconds(); 
+        velocity.linvel = Vec3::new(movement_vel.x,velocity.linvel.y,movement_vel.z);
+        velocity.angvel = rotation_vec.normalize_or_zero() * 100.0 * time.delta_seconds();
+        
 
+    }
+}
 
-    // let scalar = time.delta_seconds() * player_info.1.speed;
-    let rotation_scalar = time.delta_seconds() * 10.0;
-    // let rotated_vec = player_info.0.rotation.mul_vec3(movement_vec) * scalar;
-    // let xy_vec = Vec3::new(rotated_vec.x,0.0,rotated_vec.z);
-    // player_info.0.translation += xy_vec;
-    player_info.0.rotation *= rotation_quat * rotation_scalar;
+fn setup (
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let _player_id = commands
+        .spawn(RigidBody::Dynamic)
+        .insert(Velocity { linvel: Vec3::ZERO, angvel: Vec3::ZERO } )
+        .insert(LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z)
+        .insert(Collider::ball(0.5))
+        .insert(PlayerBundle {
+            ..default()
+        })
+        .insert( PbrBundle {
+            transform: Transform::from_xyz(0.0,1.0,0.0),
+            mesh: meshes.add(Cuboid::new(1.0,1.0,1.0)),
+            material: materials.add(Color::WHITE),
+            ..default()
+        })
+        .id();
+    // Base of map
+    commands
+        .spawn(Collider::cuboid(100.0, 0.1, 100.0))
+        .insert(TransformBundle::from(Transform::from_xyz(0.0, -2.0, 0.0)))
+        .insert(PbrBundle { 
+            mesh: meshes.add(Cuboid::new(100.0,0.1,100.0)),
+            material: materials.add(Color::WHITE),
+            ..default()
+        });
+    // cube
+    commands
+        .spawn(RigidBody::Dynamic)
+        .insert(Collider::cuboid(0.5, 0.5, 0.5))
+        .insert(Restitution::coefficient(0.5))
+        .insert(PbrBundle { 
+            transform: Transform::from_xyz(0.0,4.0,-5.0),
+            mesh: meshes.add(Cuboid::new(1.1,1.1,1.1)),
+            material: materials.add(Color::WHITE),
+            ..default()
+        });
+    // Light
+    commands.spawn(PointLightBundle {
+        point_light: PointLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform::from_xyz(4.0,8.0,4.0),
+        ..default()
+    });
+
+    // Camera
+    commands
+        .spawn(Camera3dBundle {
+            transform: Transform::from_xyz(0.0,15.0,10.0).looking_at(Vec3::new(0.0,0.0,0.0),Vec3::Y),
+            ..default()
+        });
 }
 
 fn main() {
@@ -183,7 +185,5 @@ fn main() {
                 update_camera,
             ).chain(),
         )
-
         .run();
-    println!("Hello, world!");
 }
